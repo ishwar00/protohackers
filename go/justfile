@@ -1,0 +1,3 @@
+smoke_test:
+	go run 0_smoke_test/main.go
+
