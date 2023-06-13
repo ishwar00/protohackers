@@ -1,3 +1,6 @@
 smoke_test:
 	go run 0_smoke_test/main.go
 
+prime_time:
+	go run 1_prime_time/main.go
+

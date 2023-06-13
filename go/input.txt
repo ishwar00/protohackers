@@ -1,0 +1,3 @@
+{"method":"isPrime","number":123}
+{"method":"isPrime","number":23}
+{}

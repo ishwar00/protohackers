@@ -20,6 +20,8 @@ func (s *Server) Start(handleConn HandleConn) {
 		log.Fatalf("Server.Start(): %v", err)
 	}
 
+	fmt.Printf("%s server listening on %s...\n", s.network, addr)
+
 	defer listener.Close()
 
 	for {
