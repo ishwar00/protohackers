@@ -4,3 +4,6 @@ smoke_test:
 prime_time:
 	go run 1_prime_time/main.go
 
+means_to_an_end:
+	go run 2_means_to_an_end/main.go
+

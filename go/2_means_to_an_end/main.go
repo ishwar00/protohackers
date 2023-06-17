@@ -1,6 +1,8 @@
 package main
 
 import (
+	"bufio"
+	"bytes"
 	"encoding/binary"
 	"errors"
 	"fmt"
@@ -19,49 +21,54 @@ type Query struct {
 	MaxTime int32
 }
 
-type Message struct {
-	Message []byte
+type Buffer struct {
+	Buf []Insert
 }
 
-func (m Message) Type() rune {
-	return rune(m.Message[0])
+func (b *Buffer) insert(i Insert) {
+	b.Buf = append(b.Buf, i)
 }
 
-func (m Message) ProcessFormat() (any, error) {
-	if len(m.Message) != 9 {
+func (b Buffer) query(q Query) int32 {
+	price_sum := 0
+	price_count := 0
+	for _, msg := range b.Buf {
+		if msg.TimeStamp <= q.MaxTime && q.MinTime <= msg.TimeStamp {
+			fmt.Printf("debubInfo: msg: %+v\n", msg)
+			price_sum += int(msg.Price)
+			price_count++
+		}
+	}
+
+	if price_count != 0 {
+		return int32(price_sum / price_count)
+	}
+
+	return 0
+}
+
+func processFormat(buf []byte) (any, error) {
+	if len(buf) != 9 {
 		return nil, errors.New("message is not of 9 bytes")
 	}
 
-	switch m.Type() {
-	case 'I':
-		timeStamp, err := DecodeInt(m.Message[1:4])
-		if err != nil {
-			return nil, err
-		}
-		price, err := DecodeInt(m.Message[5:])
-		if err != nil {
-			return nil, err
-		}
+	typeOfMsg, first4, second4, err := decodeMessage(buf)
+	if err != nil {
+		return nil, err
+	}
 
-		insert := &Insert{
-			TimeStamp: timeStamp,
-			Price:     price,
+	switch typeOfMsg {
+	case 'I':
+		insert := Insert{
+			TimeStamp: first4,
+			Price:     second4,
 		}
 
 		return insert, nil
 	case 'Q':
-		minTime, err := DecodeInt(m.Message[1:4])
-		if err != nil {
-			return nil, err
-		}
-		maxTime, err := DecodeInt(m.Message[5:])
-		if err != nil {
-			return nil, err
-		}
-
-		query := &Query{
-			MinTime: minTime,
-			MaxTime: maxTime,
+		query := Query{
+			MinTime: first4,
+			MaxTime: second4,
 		}
 
 		return query, nil
@@ -70,57 +77,98 @@ func (m Message) ProcessFormat() (any, error) {
 	return nil, errors.New("unknown format recieved")
 }
 
-func DecodeInt(buf []byte) (int32, error) {
-	value, n := binary.Varint(buf)
-
-	// local util
-	Err := func(msg string) (int32, error) {
-		errMsg := fmt.Sprintf("decoding failed: %s, buf = %+v\n", msg, buf)
-		return 0, errors.New(errMsg)
-	}
-	switch {
-	case n != len(buf):
-		return Err("Varint() did not read all bytes of 'buf'")
-	case n == 0:
-		return Err("given 'buf' is too small")
-	case n == 0:
-		return Err("value larger than 64 bits(overflow)")
+func decodeMessage(buf []byte) (rune, int32, int32, error) {
+	typeOfMsg := rune(buf[0])
+	first4, err := decodeInt(buf[1:5])
+	if err != nil {
+		return ' ', 0, 0, err
 	}
 
-	return int32(value), nil // ok?
+	second4, err := decodeInt(buf[5:])
+	if err != nil {
+		return ' ', 0, 0, err
+	}
+
+	return typeOfMsg, first4, second4, nil
+}
+
+func decodeInt(buf []byte) (int32, error) {
+	var intBuf int32
+	err := binary.Read(bytes.NewReader(buf), binary.BigEndian, &intBuf)
+	if err != nil {
+		fmt.Printf("binary.Read(): failed with: %+v\n", err)
+		return 0, err
+	}
+
+	return intBuf, err
+}
+
+func encodeInt(value int32) ([]byte, error) {
+	buf := new(bytes.Buffer)
+	err := binary.Write(buf, binary.BigEndian, &value)
+	if err != nil {
+		fmt.Printf("binary.Write(): failed with: %+v\n", err)
+		return []byte{}, err
+	}
+	return buf.Bytes(), nil
 }
 
 func handleConn(conn net.Conn) {
 	defer conn.Close()
+	fmt.Printf("handling connection from %v\n", conn.RemoteAddr().String())
 
-	buf := make([]byte, 9)
-	for {
-		n, err := conn.Read(buf)
+	buffer := Buffer{
+		Buf: []Insert{},
+	}
+
+	split := func(data []byte, atEOF bool) (int, []byte, error) {
+		if len(data) >= 9 {
+			return 9, data[:9], nil
+		}
+
+		if !atEOF {
+			return 0, nil, nil
+		}
+
+		return 0, data, bufio.ErrFinalToken
+	}
+
+	scanner := bufio.NewScanner(conn)
+	scanner.Split(split)
+	for scanner.Scan() {
+		formattedMsg, err := processFormat(scanner.Bytes())
 		if err != nil {
-			fmt.Printf("server error: Read(): %s\n", err.Error())
-			return
-		}
-		if n != 9 {
-			fmt.Println("client error: could not read 9 bytes")
-			return
-		}
-
-		msg := &Message{
-			Message: buf,
-		}
-
-		formattedMsg, err := msg.ProcessFormat()
-		if err != nil {
-			fmt.Printf("ProcessFormat(): %s\n", err)
-			return
+			fmt.Printf("processFormat(): %s\n", err)
+			conn.Write([]byte{0, 0, 0, 0})
+			continue
 		}
 
 		switch formattedMsg.(type) {
 		case Query:
+			q := formattedMsg.(Query)
+
+			if q.MinTime > q.MaxTime {
+				conn.Write([]byte{0, 0, 0, 0})
+				continue
+			}
+
+			mean := buffer.query(q)
+			response, err := encodeInt(mean)
+			if err != nil {
+				conn.Write([]byte{0, 0, 0, 0})
+				continue
+			}
+			conn.Write(response[:4])
 		case Insert:
+			i := formattedMsg.(Insert)
+			buffer.insert(i)
 		default:
-			panic("some thing went wrong!")
+			conn.Write([]byte{0, 0, 0, 0})
 		}
+	}
+
+	if err := scanner.Err(); err != nil {
+		fmt.Printf("scanner failed with '%v'\n", err)
 	}
 }
 
