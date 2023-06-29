@@ -7,3 +7,6 @@ prime_time:
 means_to_an_end:
 	go run 2_means_to_an_end/main.go
 
+budget_chat:
+	go run 3_budget_chat/main.go
+
