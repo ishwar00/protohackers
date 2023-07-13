@@ -10,3 +10,6 @@ means_to_an_end:
 budget_chat:
 	go run 3_budget_chat/main.go
 
+unusual_database_program:
+	go run 4_unusual_database_program/main.go
+
