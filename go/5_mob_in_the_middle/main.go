@@ -1,9 +1,9 @@
 package main
 
 import (
-	"bufio"
 	"fmt"
 	"github/ishwar00/protohackers/go/protohacks/server"
+	"io"
 	"log"
 	"net"
 	"strings"
@@ -28,20 +28,21 @@ func WriteBoguscoinAddress(msg string) string {
 }
 
 func proxy(from *net.Conn, to *net.Conn) {
-	fromScnr := bufio.NewScanner(*from)
-
-	for fromScnr.Scan() {
-		serverMsg := fromScnr.Text()
-		bogusMsg := WriteBoguscoinAddress(serverMsg) + "\n"
-		_, err := (*to).Write([]byte(bogusMsg))
+	buf := make([]byte, 1024)
+	for {
+		n, err := (*from).Read(buf)
 		if err != nil {
-			log.Printf("to.Write(): %s", err)
+			if err != io.EOF {
+				log.Printf("from.Read(): %v\n", err)
+			}
 			return
 		}
-	}
-
-	if err := fromScnr.Err(); err != nil {
-		log.Printf("fromScnr.Err(): %s\n", fromScnr.Err())
+		bogusMsg := WriteBoguscoinAddress(string(buf[:n]))
+		_, err = (*to).Write([]byte(bogusMsg))
+		if err != nil {
+			log.Printf("to.Write(): %s\n", err)
+			return
+		}
 	}
 }
 
@@ -53,12 +54,11 @@ func handleConn(clientConn net.Conn) {
 		log.Fatalf("Server.Start(): %v\n", err)
 	}
 
-	go proxy(&clientConn, &serverConn)
-	proxy(&serverConn, &clientConn)
+	go proxy(&serverConn, &clientConn)
+	proxy(&clientConn, &serverConn)
 }
 
 func main() {
 	server := server.New("tcp", "5001")
 	server.Start(handleConn)
 }
-
