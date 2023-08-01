@@ -1,9 +1,9 @@
 package main
 
 import (
+	"bufio"
 	"fmt"
 	"github/ishwar00/protohackers/go/protohacks/server"
-	"io"
 	"log"
 	"net"
 	"strings"
@@ -27,22 +27,39 @@ func WriteBoguscoinAddress(msg string) string {
 	return strings.Join(splits, " ")
 }
 
-func proxy(from *net.Conn, to *net.Conn) {
-	buf := make([]byte, 1024)
-	for {
-		n, err := (*from).Read(buf)
-		if err != nil {
-			if err != io.EOF {
-				log.Printf("from.Read(): %v\n", err)
-			}
-			return
+func splitFunc(data []byte, atEOF bool) (advance int, token []byte, err error) {
+	for i := 0; i < len(data); i++ {
+		if data[i] == '\n' {
+			return i + 1, data[:i], nil
 		}
-		bogusMsg := WriteBoguscoinAddress(string(buf[:n]))
-		_, err = (*to).Write([]byte(bogusMsg))
+	}
+
+	if !atEOF {
+		return 0, nil, nil
+	}
+
+	// discard if it is not ending with new line
+	return 0, []byte{}, bufio.ErrFinalToken
+}
+
+func proxy(from *net.Conn, to *net.Conn) {
+	fromScnr := bufio.NewScanner(*from)
+	fromScnr.Split(splitFunc)
+
+	for fromScnr.Scan() {
+		serverMsg := fromScnr.Text()
+		if len(serverMsg) == 0 {
+			continue
+		}
+		bogusMsg := WriteBoguscoinAddress(serverMsg) + "\n"
+		_, err := (*to).Write([]byte(bogusMsg))
 		if err != nil {
 			log.Printf("to.Write(): %s\n", err)
 			return
 		}
+	}
+	if err := fromScnr.Err(); err != nil {
+		log.Printf("fromScnr.Err(): %s\n", fromScnr.Err())
 	}
 }
 
